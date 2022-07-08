@@ -21,6 +21,7 @@ from tfx.dsl.compiler import compiler_utils
 from tfx.dsl.compiler import constants
 from tfx.dsl.components.base import base_component
 from tfx.dsl.components.base import base_node
+from tfx.dsl.components.common import resolver
 from tfx.dsl.experimental.conditionals import conditional
 from tfx.dsl.input_resolution import resolver_op
 from tfx.dsl.input_resolution.ops import ops
@@ -358,7 +359,12 @@ def compile_node_inputs(
 ) -> None:
   """Compile NodeInputs from BaseNode input channels."""
   # Compile DSL node inputs.
-  for input_key, channel in tfx_node.inputs.items():
+  # TODO(b/238282600): Remove unnecessary branch and just use tfx_node.inputs.
+  if compiler_utils.is_resolver(tfx_node):
+    input_channels = cast(resolver.Resolver, tfx_node).resolved_inputs
+  else:
+    input_channels = tfx_node.inputs
+  for input_key, channel in input_channels.items():
     if (isinstance(tfx_node, base_component.BaseComponent) and
         tfx_node.spec.is_allow_empty_input(input_key)):
       min_count = 0

@@ -15,10 +15,11 @@
 
 import collections
 
-from typing import Optional, List, Set, Iterable, Dict
+from typing import Optional, List, Set, Iterable, Dict, cast
 
 from tfx.dsl.compiler import compiler_utils
 from tfx.dsl.components.base import base_node
+from tfx.dsl.components.common import resolver
 from tfx.dsl.control_flow import for_each_internal
 from tfx.dsl.experimental.conditionals import conditional
 from tfx.dsl.input_resolution import resolver_op
@@ -125,9 +126,15 @@ class NodeContext:
   """Per-node context for pipeline compilation."""
 
   def __init__(self, tfx_node: base_node.BaseNode):
+    # TODO(b/238282600): Remove unnecessary branch and just use tfx_node.inputs.
+    if compiler_utils.is_resolver(tfx_node):
+      tfx_node = cast(resolver.Resolver, tfx_node)
+      input_channels = tfx_node.resolved_inputs
+    else:
+      input_channels = tfx_node.inputs
     self._input_key_by_channel = {
         channel: input_key
-        for input_key, channel in tfx_node.inputs.items()
+        for input_key, channel in input_channels.items()
     }
     self._input_graph_key_by_resolver_fn = {}
 

@@ -24,6 +24,7 @@ from tfx.dsl.input_resolution import resolver_op
 from tfx.orchestration import data_types
 from tfx.orchestration import metadata
 from tfx.types import channel_utils
+from tfx.types import resolved_channel
 from tfx.utils import doc_controls
 from tfx.utils import json_utils
 
@@ -240,13 +241,19 @@ class Resolver(base_node.BaseNode):
           output_data_type=resolver_op.DataType.ARTIFACT_MULTIMAP,
           args=[trace_input],
           kwargs=self._config)
+    # An observed inputs from DSL as if Resolver node takes an inputs.
     self._input_dict = channels
+    # An actual resolved inputs that is the same as Resolver node's outputs.
+    # TODO(b/238282600): Just use _input_dict for this purpose.
+    self._resolved_inputs = {}
     self._output_dict = {}
-    for k, c in self._input_dict.items():
+    for k, c in channels.items():
       if not isinstance(c, types.BaseChannel):
         raise ValueError(
             f'Expected extra kwarg {k!r} to be of type `tfx.types.BaseChannel` '
             f'but got {c!r} instead.')
+      self._resolved_inputs[k] = resolved_channel.ResolvedChannel(
+          c.type, self._trace_result, k)
       # TODO(b/161490287): remove static artifacts.
       self._output_dict[k] = (
           types.OutputChannel(c.type, self, k).set_artifacts([c.type()]))
@@ -261,6 +268,11 @@ class Resolver(base_node.BaseNode):
   @doc_controls.do_not_generate_docs
   def inputs(self) -> Dict[str, Any]:
     return self._input_dict
+
+  @property
+  @doc_controls.do_not_generate_docs
+  def resolved_inputs(self) -> Dict[str, Any]:
+    return self._resolved_inputs
 
   @property
   def outputs(self) -> Dict[str, Any]:
