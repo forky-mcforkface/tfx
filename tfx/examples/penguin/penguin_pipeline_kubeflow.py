@@ -15,23 +15,23 @@
 
 import os
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
-import absl
 from absl import flags
+from absl import logging
 import tensorflow_model_analysis as tfma
 from tfx import v1 as tfx
 
 # TODO(b/197359030): test a persistent volume (PV) mounted scenario.
-flags.DEFINE_bool(
-    'use_gcp', False, 'whether to use GCP resources, including AI \n'
-    'Platform components and dataflow')
+flags.DEFINE_bool('use_aip', False, 'whether to use AIP configuration')
+flags.DEFINE_bool('use_vertex', False, 'whether to use Vertex configuration')
 
-_pipeline_name = 'penguin_kubeflow'
+_pipeline_name = 'penguin-kubeflow-e2e'
+_pipeline_definition_file = _pipeline_name + '_pipeline.json'
 
 # Directory and data locations (uses Google Cloud Storage).
-_input_root = 'gs://penguin_test'
-_output_root = 'gs://penguin_test'
+_input_root = 'gs://tfx-testing-bucket'
+_output_root = 'gs://tfx-testing-bucket'
 
 _data_root = os.path.join(_input_root, 'penguin', 'data')
 # User provided schema of the input data.
@@ -49,7 +49,10 @@ _pipeline_root = os.path.join(_output_root, _pipeline_name)
 # Google Cloud Platform project id to use when deploying this pipeline.
 # This project configuration is for running Dataflow, CAIP Training,
 # CAIP Vizier (CloudTuner), and CAIP Prediction services.
-_project_id = 'my-gcp-project'
+_project_id = 'tfx-testing'
+_machine_type = 'n1-standard-4'
+_replica_count = 1
+_endpoint_name = 'prediction-' + _pipeline_name
 
 # Region to use for Dataflow jobs and AI Platform jobs.
 #   Dataflow: https://cloud.google.com/dataflow/docs/concepts/regional-endpoints
@@ -91,6 +94,29 @@ _ai_platform_serving_args = {
     'regions': [_gcp_region]
 }
 
+# A dict which contains the job parameters to passed to Google Cloud's Vertex AI
+# platform. For the full set of parameters supported by Vertex, refer to
+# https://cloud.google.com/vertex-ai/docs/training/create-custom-job
+_vertex_job_spec = {
+    'project':
+        _project_id,
+    'worker_pool_specs': [{
+        'machine_spec': {
+            'machine_type': _machine_type,
+        },
+        'replica_count': _replica_count,
+        'container_spec': {
+            'image_uri': 'gcr.io/tfx-oss-public/tfx:{}'.format(tfx.__version__),
+        },
+    }],
+}
+
+_vertex_serving_spec = {
+    'project_id': _project_id,
+    'endpoint_name': _endpoint_name,
+    'machine_type': _machine_type,
+}
+
 # Pipeline arguments for Beam powered Components.
 # Arguments differ according to runner. DataflowRunner is only selected in gcp
 # environment.
@@ -110,6 +136,8 @@ _beam_pipeline_args_by_runner = {
         '--disk_size_gb=50',
         '--machine_type=e2-standard-8',
         '--experiments=use_runner_v2',
+        '--sdk_container_image=gcr.io/tfx-oss-public/tfx:{}'.format(
+            tfx.__version__)
     ],
     'DirectRunner': [
         # TODO(b/234074054): Re-enable multi_processing mode after beam is fixed
@@ -131,11 +159,12 @@ def create_pipeline(
     data_root: str,
     module_file: str,
     ai_platform_training_args: Dict[str, str],
-    ai_platform_serving_args: Dict[str, str],
+    ai_platform_serving_args: Dict[str, Union[List[str], str]],
     enable_tuning: bool,
     user_provided_schema_path: str,
     beam_pipeline_args: List[str],
-    use_aip_component: bool,
+    use_aip: bool,
+    use_vertex: bool,
     serving_model_dir: Optional[str] = None) -> tfx.dsl.Pipeline:
   """Implements the penguin pipeline with TFX and Kubeflow Pipeline.
 
@@ -155,8 +184,8 @@ def create_pipeline(
     user_provided_schema_path: Path to the schema of the input data.
     beam_pipeline_args: List of beam pipeline options. Please refer to
       https://cloud.google.com/dataflow/docs/guides/specifying-exec-params#setting-other-cloud-dataflow-pipeline-options.
-    use_aip_component: whether to use normal TFX components or customized AI
-      platform components.
+    use_aip: whether to use customized AI platform components.
+    use_vertex: whether to use customized Vertex platform components.
     serving_model_dir: filepath to write pipeline SavedModel to.
 
   Returns:
@@ -203,7 +232,7 @@ def create_pipeline(
   # function. Note that once the hyperparameters are tuned, you can drop the
   # Tuner component from pipeline and feed Trainer with tuned hyperparameters.
   if enable_tuning:
-    if use_aip_component:
+    if use_aip:
       # The Tuner component launches 1 AIP Training job for flock management of
       # parallel tuning. For example, 2 workers (defined by num_parallel_trials)
       # in the flock management AIP Training job, each runs a search loop for
@@ -248,6 +277,26 @@ def create_pipeline(
               .REMOTE_TRIALS_WORKING_DIR_KEY:
                   os.path.join(pipeline_root, 'trials'),
           })
+    elif use_vertex:
+      tuner = tfx.extensions.google_cloud_ai_platform.Tuner(
+          module_file=module_file,
+          examples=transform.outputs['transformed_examples'],
+          transform_graph=transform.outputs['transform_graph'],
+          train_args=tfx.proto.TrainArgs(num_steps=100),
+          eval_args=tfx.proto.EvalArgs(num_steps=50),
+          tune_args=tfx.proto.TuneArgs(num_parallel_trials=3),
+          custom_config={
+              tfx.extensions.google_cloud_ai_platform.ENABLE_VERTEX_KEY:
+                  True,
+              tfx.extensions.google_cloud_ai_platform.VERTEX_REGION_KEY:
+                  _gcp_region,
+              tfx.extensions.google_cloud_ai_platform.experimental
+              .TUNING_ARGS_KEY:
+                  _vertex_job_spec,
+              tfx.extensions.google_cloud_ai_platform.experimental
+              .REMOTE_TRIALS_WORKING_DIR_KEY:
+                  os.path.join(pipeline_root, 'trials'),
+          })
     else:
       tuner = tfx.components.Tuner(
           examples=transform.outputs['transformed_examples'],
@@ -255,10 +304,9 @@ def create_pipeline(
           module_file=module_file,
           train_args=tfx.proto.TrainArgs(num_steps=100),
           eval_args=tfx.proto.EvalArgs(num_steps=50),
-          tune_args=tfx.proto.TuneArgs(
-              num_parallel_trials=3))
+          tune_args=tfx.proto.TuneArgs(num_parallel_trials=3))
 
-  if use_aip_component:
+  if use_aip:
     # Uses user-provided Python function that trains a model.
     trainer = tfx.extensions.google_cloud_ai_platform.Trainer(
         module_file=module_file,
@@ -288,6 +336,24 @@ def create_pipeline(
             tfx.extensions.google_cloud_ai_platform.TRAINING_ARGS_KEY:
                 ai_platform_training_args
         })
+  elif use_vertex:
+    trainer = tfx.extensions.google_cloud_ai_platform.Trainer(
+        module_file=module_file,
+        examples=transform.outputs['transformed_examples'],
+        transform_graph=transform.outputs['transform_graph'],
+        schema=schema_gen.outputs['schema'],
+        hyperparameters=(tuner.outputs['best_hyperparameters']
+                         if enable_tuning else None),
+        train_args=tfx.proto.TrainArgs(num_steps=100),
+        eval_args=tfx.proto.EvalArgs(num_steps=50),
+        custom_config={
+            tfx.extensions.google_cloud_ai_platform.ENABLE_VERTEX_KEY:
+                True,
+            tfx.extensions.google_cloud_ai_platform.VERTEX_REGION_KEY:
+                _gcp_region,
+            tfx.extensions.google_cloud_ai_platform.TRAINING_ARGS_KEY:
+                _vertex_job_spec
+        })
   else:
     trainer = tfx.components.Trainer(
         module_file=module_file,
@@ -298,7 +364,7 @@ def create_pipeline(
                          if enable_tuning else None),
         train_args=train_args,
         eval_args=eval_args,
-        )
+    )
 
   # Get the latest blessed model for model validation.
   model_resolver = tfx.dsl.Resolver(
@@ -339,7 +405,7 @@ def create_pipeline(
       baseline_model=model_resolver.outputs['model'],
       eval_config=eval_config)
 
-  if use_aip_component:
+  if use_aip:
     pusher = tfx.extensions.google_cloud_ai_platform.Pusher(
         model=trainer.outputs['model'],
         model_blessing=evaluator.outputs['blessing'],
@@ -347,6 +413,18 @@ def create_pipeline(
             tfx.extensions.google_cloud_ai_platform.experimental
             .PUSHER_SERVING_ARGS_KEY:
                 ai_platform_serving_args
+        })
+  elif use_vertex:
+    pusher = tfx.extensions.google_cloud_ai_platform.Pusher(
+        model=trainer.outputs['model'],
+        model_blessing=evaluator.outputs['blessing'],
+        custom_config={
+            tfx.extensions.google_cloud_ai_platform.ENABLE_VERTEX_KEY:
+                True,
+            tfx.extensions.google_cloud_ai_platform.VERTEX_REGION_KEY:
+                _gcp_region,
+            tfx.extensions.google_cloud_ai_platform.SERVING_ARGS_KEY:
+                _vertex_serving_spec,
         })
   else:
     pusher = tfx.components.Pusher(
@@ -380,42 +458,53 @@ def create_pipeline(
 
 
 def main():
-  absl.logging.set_verbosity(absl.logging.INFO)
-  absl.flags.FLAGS(sys.argv)
+  logging.set_verbosity(logging.INFO)
+  flags.FLAGS(sys.argv)
 
+  # Both AIP and Vertex run on GCP so it isn't possible to
+  # have both of these flags True. Either they are
+  # both False (run locally) or only one is True.
+  assert bool(flags.FLAGS.use_aip) ^ bool(flags.FLAGS.use_vertex), (
+      'Please pick one '
+      'orchestration '
+      'platform, either'
+      ' AIP or Vertex '
+      'but not both.')
   # Metadata config. The defaults works work with the installation of
   # KF Pipelines using Kubeflow. If installing KF Pipelines using the
   # lightweight deployment option, you may need to override the defaults.
-  metadata_config = (tfx.orchestration.experimental
-                     .get_default_kubeflow_metadata_config())
 
-  runner_config = tfx.orchestration.experimental.KubeflowDagRunnerConfig(
-      kubeflow_metadata_config=metadata_config)
-
-  if flags.FLAGS.use_gcp:
-    beam_pipeline_args = _beam_pipeline_args_by_runner['DataflowRunner']
-    serving_model_dir = None
+  if flags.FLAGS.use_vertex:
+    # beam_pipeline_args = _beam_pipeline_args_by_runner['DirectRunner']
+    dag_runner = tfx.orchestration.experimental.KubeflowV2DagRunner(
+        config=tfx.orchestration.experimental.KubeflowV2DagRunnerConfig(),
+        output_filename=_pipeline_definition_file)
   else:
-    beam_pipeline_args = _beam_pipeline_args_by_runner['DirectRunner']
-    serving_model_dir = _serving_model_dir
+    # beam_pipeline_args = _beam_pipeline_args_by_runner['DataflowRunner']
+    dag_runner = tfx.orchestration.experimental.KubeflowDagRunner(
+        config=tfx.orchestration.experimental.KubeflowDagRunnerConfig(
+            metadata_config=tfx.orchestration.experimental
+            .get_default_kubeflow_metadata_config()))
 
-  tfx.orchestration.experimental.KubeflowDagRunner(config=runner_config).run(
-      create_pipeline(
-          pipeline_name=_pipeline_name,
-          pipeline_root=_pipeline_root,
-          data_root=_data_root,
-          module_file=_module_file,
-          enable_tuning=False,
-          user_provided_schema_path=_user_provided_schema,
-          ai_platform_training_args=_ai_platform_training_args,
-          ai_platform_serving_args=_ai_platform_serving_args,
-          beam_pipeline_args=beam_pipeline_args,
-          use_aip_component=flags.FLAGS.use_gcp,
-          serving_model_dir=serving_model_dir,
-      ))
+    dag_runner.run(
+        create_pipeline(
+            pipeline_name=_pipeline_name,
+            pipeline_root=_pipeline_root,
+            data_root=_data_root,
+            module_file=_module_file,
+            enable_tuning=False,
+            user_provided_schema_path=_user_provided_schema,
+            ai_platform_training_args=_ai_platform_training_args,
+            ai_platform_serving_args=_ai_platform_serving_args,
+            beam_pipeline_args=_beam_pipeline_args_by_runner['DataflowRunner'],
+            use_aip=flags.FLAGS.use_aip,
+            use_vertex=flags.FLAGS.use_vertex,
+            serving_model_dir=_serving_model_dir,
+        ))
 
 
 # To compile the pipeline:
-# python penguin_pipeline_kubeflow.py --use_gcp=True or False
+# python penguin_pipeline_kubeflow.py --use_aip=True or False --use_vertex=True
+# or False
 if __name__ == '__main__':
   main()
