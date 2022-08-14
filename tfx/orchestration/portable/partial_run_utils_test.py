@@ -1052,18 +1052,18 @@ class PartialRunTest(absltest.TestCase):
           run_context.name: run_context for run_context in
           m.store.get_contexts_by_type(constants.PIPELINE_RUN_CONTEXT_TYPE_NAME)
       }
-      self.assertEqual(
+      self.assertIn(
+          pipeline_run_contexts['run_3'],
           m.store.get_parent_contexts_by_context(
-              pipeline_run_contexts['run_4'].id),
-          [pipeline_run_contexts['run_3']])
-      self.assertEqual(
+              pipeline_run_contexts['run_4'].id))
+      self.assertIn(
+          pipeline_run_contexts['run_2'],
           m.store.get_parent_contexts_by_context(
-              pipeline_run_contexts['run_3'].id),
-          [pipeline_run_contexts['run_2']])
-      self.assertEqual(
+              pipeline_run_contexts['run_3'].id))
+      self.assertIn(
+          pipeline_run_contexts['run_1'],
           m.store.get_parent_contexts_by_context(
-              pipeline_run_contexts['run_2'].id),
-          [pipeline_run_contexts['run_1']])
+              pipeline_run_contexts['run_2'].id))
 
   def testReusePipelineArtifacts_preventInconsistency(self):
     """Tests that a tricky sequence of partial runs raises an error."""

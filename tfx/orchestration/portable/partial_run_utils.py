@@ -544,12 +544,11 @@ class _ArtifactRecycler:
     # - No need to worry about other pipeline runs that may be taking place
     #   concurrently and changing MLMD state.
     # - Fewer MLMD queries.
-    # TODO(b/196981304): Ensure there are no pipeline runs from other pipelines.
-    self._pipeline_run_contexts = {
-        run_ctx.name: run_ctx
-        for run_ctx in self._mlmd.store.get_contexts_by_type(
-            constants.PIPELINE_RUN_CONTEXT_TYPE_NAME)
-    }
+    self._pipeline_run_contexts = {}
+    for context in self._mlmd.store.get_children_contexts_by_context(
+        self._pipeline_context.id):
+      if context.type_id == self._pipeline_run_type_id:
+        self._pipeline_run_contexts[context.name] = context
 
   def _get_pipeline_context(self) -> metadata_store_pb2.Context:
     result = self._mlmd.store.get_context_by_type_and_name(
