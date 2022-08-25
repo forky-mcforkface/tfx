@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Compiles a TFX pipeline into a TFX DSL IR proto."""
+
 import inspect
 import itertools
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, cast, Mapping
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Type, cast
 
 from tfx import types
 from tfx.dsl.compiler import compiler_context
@@ -860,6 +861,36 @@ def _set_node_inputs(node: pipeline_pb2.PipelineNode,
           raise ValueError(
               f"Failed to find producer info for the input channel '{key}' "
               f"of node {tfx_node.id}.")
+      elif isinstance(input_channel, tfx_channel.MLMDQueryChannel):
+        # Add pipeline context query.
+        if input_channel.pipeline_name:
+          pipeline_context_query = channel_pb.context_queries.add()
+          pipeline_context_query.type.name = constants.PIPELINE_CONTEXT_TYPE_NAME
+          pipeline_context_query.name.field_value.string_value = (
+              input_channel.pipeline_name)
+
+        # Add node context query.
+        if input_channel.producer_component_id:
+          channel_pb.producer_node_query.id = (
+              input_channel.producer_component_id)
+          node_context_query = channel_pb.context_queries.add()
+          node_context_query.type.name = constants.NODE_CONTEXT_TYPE_NAME
+          node_context_query.name.field_value.string_value = "{}.{}".format(
+              input_channel.pipeline_name, input_channel.producer_component_id)
+
+        # Add pipeline run context query.
+        if input_channel.pipeline_run_id:
+          run_context_query = channel_pb.context_queries.add()
+          run_context_query.type.name = constants.PIPELINE_RUN_CONTEXT_TYPE_NAME
+          run_context_query.name.field_value.string_value = (
+              input_channel.pipeline_run_id)
+
+        if input_channel.output_key:
+          channel_pb.output_key = input_channel.output_key
+
+        artifact_type = input_channel.type._get_artifact_type()  # pylint: disable=protected-access
+        channel_pb.artifact_query.type.CopyFrom(artifact_type)
+        channel_pb.artifact_query.type.ClearField("properties")
       else:
         # If the node input is not an OutputChannel, fill the context queries
         # based on Channel info. We requires every channel to have pipeline
@@ -879,12 +910,12 @@ def _set_node_inputs(node: pipeline_pb2.PipelineNode,
               pipeline_ctx.pipeline_info.pipeline_context_name,
               input_channel.producer_component_id)
 
+        if input_channel.output_key:
+          channel_pb.output_key = input_channel.output_key
+
         artifact_type = input_channel.type._get_artifact_type()  # pylint: disable=protected-access
         channel_pb.artifact_query.type.CopyFrom(artifact_type)
         channel_pb.artifact_query.type.ClearField("properties")
-
-        if input_channel.output_key:
-          channel_pb.output_key = input_channel.output_key
 
     # Set NodeInputs.min_count.
     if isinstance(tfx_node, base_component.BaseComponent):

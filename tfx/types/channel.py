@@ -360,6 +360,45 @@ class OutputChannel(Channel):
     return self
 
 
+class MLMDQueryChannel(Channel):
+  """Channel subtype that is used for node.outputs."""
+
+  def __init__(self,
+               artifact_type: Type[Artifact],
+               pipeline_name: str = '',
+               producer_component_id: str = '',
+               output_key: Optional[str] = None,
+               pipeline_run_id: Optional[str] = None):
+    """Initialization of MLMDQueryChannel.
+
+    Args:
+      artifact_type: Subclass of Artifact for this channel.
+      pipeline_name: Name of a pipeline. If it is set, this channel will query
+        MLMD using pipeline context.
+      producer_component_id: Producer component id of the Channel. If it is set,
+        the channel will query MLMD using node context.
+      output_key: Corresponding node.outputs key for this channel.
+      pipeline_run_id: (Optional) ID of a pipeline run.
+    """
+    super().__init__(
+        type=artifact_type,
+        output_key=output_key
+    )
+    self.pipeline_name = pipeline_name
+    self.producer_component_id = producer_component_id
+    self.pipeline_run_id = pipeline_run_id
+
+    # TODO(b/240720905) Implement other fields: owner, project_name
+    # mlmd_service_target, etc.
+
+  def __repr__(self) -> str:
+    return (f'{self.__class__.__name__}('
+            f'pipeline_name={self.pipeline_name}, '
+            f'producer_component_id={self.producer_component_id}, '
+            f'output_key={self.output_key}, '
+            f'pipeline_run_id={self.pipeline_run_id})')
+
+
 @doc_controls.do_not_generate_docs
 class UnionChannel(BaseChannel):
   """Union of multiple Channels with the same type.
