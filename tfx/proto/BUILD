@@ -68,3 +68,8 @@ tfx_py_proto_library(
     name = "example_diff_proto_py_pb2",
     srcs = ["example_diff.proto"],
 )
+
+tfx_py_proto_library(
+    name = "distribution_validator_proto_py_pb2",
+    deps = [":distribution_validator_proto"],
+)
