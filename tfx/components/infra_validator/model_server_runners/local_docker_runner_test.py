@@ -68,7 +68,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
     self._model_server_client = patcher.start().return_value
     self.addCleanup(patcher.stop)
 
-  def _create_local_docker_runner(self):
+  def _CreateLocalDockerRunner(self):
     return local_docker_runner.LocalDockerRunner(
         model_path=self._model_path,
         serving_binary=self._serving_binary,
@@ -76,7 +76,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
 
   def testStart(self):
     # Prepare mocks and variables.
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
 
     # Act.
     runner.Start()
@@ -87,18 +87,17 @@ class LocalDockerRunnerTest(tf.test.TestCase):
     self.assertLessEqual(
         dict(
             image='tensorflow/serving:1.15.0',
+            environment={
+                'MODEL_NAME': 'chicago-taxi',
+                'MODEL_BASE_PATH': '/model'
+            },
             publish_all_ports=True,
             auto_remove=True,
             detach=True).items(), run_kwargs.items())
-    self.assertLessEqual(
-        {
-            'MODEL_NAME': 'chicago-taxi',
-            'MODEL_BASE_PATH': '/model',
-        }.items(), run_kwargs['environment'].items())
 
   def testStartMultipleTimesFail(self):
     # Prepare mocks and variables.
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
 
     # Act.
     runner.Start()
@@ -112,7 +111,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
   @mock.patch('time.time')
   def testGetEndpoint_AfterWaitUntilRunning(self, mock_time):
     # Prepare mocks and variables.
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(10))
     container = self._docker_client.containers.run.return_value
     container.status = 'running'
@@ -131,7 +130,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
 
   def testGetEndpoint_FailWithoutStartingFirst(self):
     # Prepare mocks and variables.
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
 
     # Act.
     with self.assertRaises(AssertionError):
@@ -141,11 +140,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
   def testWaitUntilRunning(self, mock_time):
     # Prepare mocks and variables.
     container = self._docker_client.containers.run.return_value
-    container.ports = {
-        '8500/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '1234'}],  # gRPC port.
-        '8501/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '5678'}]   # REST port.
-    }
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(10))
 
     # Setup state.
@@ -164,7 +159,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
   @mock.patch('time.time')
   def testWaitUntilRunning_FailWithoutStartingFirst(self, mock_time):
     # Prepare runner.
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(10))
 
     # Act.
@@ -178,7 +173,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
   def testWaitUntilRunning_FailWhenBadContainerStatus(self, mock_time):
     # Prepare mocks and variables.
     container = self._docker_client.containers.run.return_value
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(10))
 
     # Setup state.
@@ -195,7 +190,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
       self, mock_sleep, mock_time):
     # Prepare mocks and variables.
     container = self._docker_client.containers.run.return_value
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(20))
 
     # Setup state.
@@ -214,7 +209,7 @@ class LocalDockerRunnerTest(tf.test.TestCase):
     # Prepare mocks and variables.
     container = self._docker_client.containers.run.return_value
     container.reload.side_effect = docker_errors.NotFound('message required.')
-    runner = self._create_local_docker_runner()
+    runner = self._CreateLocalDockerRunner()
     mock_time.side_effect = list(range(20))
 
     # Setup state.
