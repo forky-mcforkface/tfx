@@ -79,7 +79,8 @@ class Compiler:
 
     # Step 3.2: Handle ForEach.
     # Similarly, pipeline level's foreach config is stored in PipelineBegin node
-    _set_for_each(node, p, pipeline_ctx, p.inputs)
+    if pipeline_ctx.parent_pipeline_context:
+      _set_for_each(node, p, pipeline_ctx.parent_pipeline_context, p.inputs)
 
     # Step 3.3: Fill node inputs
     # Note here we use parent_pipeline_context, because a PipelineBegin node
